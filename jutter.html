@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<!--
+
+JUTTER!
+A simple HTML5 game written by Kevin Dawe
+http://kevindawe.ca
+
+-->
+<html lang="en">
+<head>
+  <title>JUTTER!</title>
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8">
+  
+  <script src="jqmin.js"></script>
+
+  <style>
+  
+  *
+  {
+    margin: 0px;
+    padding: 0px;
+  }
+  
+  body
+  {
+    background-color: #333;
+        
+    font-family: georgia;
+  }
+  
+  p
+  {        
+    text-align: justify;  
+    padding: 10px;  
+  }
+  
+  
+  #overlay
+  {
+    position:absolute;
+    z-index: 2;   
+        
+    left:50%;
+    top:50%;
+        
+    width: 501px;
+    height: 501px;	   
+    margin: -246px 0 0 -246px;      
+    
+    background-color: #fff;
+    text-align: center;    
+  }   
+  
+  #frame
+  {
+    position:absolute;
+    z-index: 1;
+    
+    left:50%;
+    top:50%;
+        
+    width: 501px;
+    height: 501px;	   
+    margin: -251px 0 0 -251px;    
+    
+    border: 5px solid #999;            
+  }
+  
+  </style>
+
+  <script>
+  
+  // ------- UTIL F'Ns ---------
+  
+  // requestAnimationFrame polyfill method:
+  // (implementation explained via http://creativejs.com/resources/requestanimationframe/ )    
+  // http://paulirish.com/2011/requestanimationframe-for-smart-animating/
+  // http://my.opera.com/emoller/blog/2011/12/20/requestanimationframe-for-smart-er-animating
+  // requestAnimationFrame polyfill by Erik Möller
+  // fixes from Paul Irish and Tino Zijdel
+  (function() {
+    var lastTime = 0;
+    var vendors = ['ms', 'moz', 'webkit', 'o'];
+    for(var x = 0; x < vendors.length && !window.requestAnimationFrame; ++x) {
+        window.requestAnimationFrame = window[vendors[x]+'RequestAnimationFrame'];
+        window.cancelAnimationFrame = window[vendors[x]+'CancelAnimationFrame'] 
+                                   || window[vendors[x]+'CancelRequestAnimationFrame'];
+    }
+ 
+    if (!window.requestAnimationFrame)
+        window.requestAnimationFrame = function(callback, element) {
+            var currTime = new Date().getTime();
+            var timeToCall = Math.max(0, 16 - (currTime - lastTime));
+            var id = window.setTimeout(function() { callback(currTime + timeToCall); }, 
+              timeToCall);
+            lastTime = currTime + timeToCall;
+            return id;
+        };
+ 
+    if (!window.cancelAnimationFrame)
+        window.cancelAnimationFrame = function(id) {
+            clearTimeout(id);
+        };
+  }());
+  
+  
+  function rnd( lower, upper )
+  {
+    upper -= lower;    
+    return Math.round( Math.random() * upper + lower );
+  }
+  
+  function is_numeric(n) 
+  {
+    return !isNaN(parseFloat(n)) && isFinite(n);
+  }
+  
+  function round( n, p )
+  {
+    return Math.round( n * Math.pow( 10, p ) ) / Math.pow( 10, p );
+  }
+  
+  function var_dump( item, maxDeep )
+  {
+    alert( objToHuman( item, maxDeep ) );
+  }
+  
+  function objToHuman(variable, maxDeep)
+  {
+      var deep = 0;
+      var maxDeep = maxDeep || 0;
+
+      function fetch(object, parent)
+      {
+          var buffer = '';
+          deep++;
+
+          for (var i in object) {
+              if (parent) {
+                  objectPath = parent + '.' + i;
+              } else {
+                  objectPath = i;
+              }
+
+              buffer += objectPath + ' (' + typeof object[i] + ')';
+
+              if (typeof object[i] == 'object') {
+                  buffer += "\n";
+                  if (deep < maxDeep) {
+                      buffer += fetch(object[i], objectPath);
+                  }
+              } else if (typeof object[i] == 'function') {
+                  buffer += "\n";
+              } else if (typeof object[i] == 'string') {
+                  buffer += ': "' + object[i] + "\"\n";
+              } else {
+                  buffer += ': ' + object[i] + "\n";
+              }
+          }
+
+          deep--;
+          return buffer;
+      }
+
+      if (typeof variable == 'object') {
+          return fetch(variable);
+      }
+
+      return '(' + typeof variable + '): ' + variable + "\n";      
+  }
+  
+  // ------- END UTIL F'Ns ---------       
+        
+  var ticker;
+  var running = false;
+  var stopping = false;
+  var canvas, ctx, w, h, cs, cw, ch; //canvas vars
+  var grid;
+  var p; //player object
+  var e_arr; //enemy array
+  var keys = []; //for our key listener
+  
+  function init()
+  {
+    //init canvas vars
+    canvas = $("#canvas")[0];
+    ctx = canvas.getContext("2d");        
+    
+    // -1 re pixel offsetting, see below
+    w = $("#canvas").width() - 1;
+    h = $("#canvas").height() - 1;
+    
+    cs = 10; //cell size
+    cw = w/cs-1; //computed width, -1 b/c it renders towards the right (off the canvas)
+    ch = h/cs-1; //computed height -1 b/c it renders towards the bottom (off the canvas)
+    
+    //to fix the 1px-line AA-ing, see
+    //http://stackoverflow.com/questions/6886791/is-this-a-canvass-linewidth-bug
+    //http://stackoverflow.com/questions/7607272/incorrect-display-linewidth-1-at-html5-canvas
+    //also, this is why we've added an extra pixel on the size of the canvas
+    ctx.translate(0.5, 0.5);                                
+        
+    //key listener
+    keys['l'] = false;
+    keys['u'] = false;
+    keys['r'] = false;
+    keys['d'] = false;
+    
+    $(document).keydown(function(e)
+    {
+      if ( typeof p !== "undefined" )
+      {
+        switch ( e.which )
+        {
+          case 37:
+          case 65:
+            keys['l'] = true;
+            p.d = "l";            
+            break;
+          case 38:
+          case 87:
+            keys['u'] = true;
+            p.d = "u";
+            break;
+          case 39:
+          case 68:
+            keys['r'] = true;
+            p.d = "r";
+            break;
+          case 40:
+          case 83:
+            keys['d'] = true;
+            p.d = "d";
+            break;
+        }
+      }                                    
+    });
+    $(document).keyup(function(e)
+    {
+      if ( typeof p !== "undefined" )
+      {
+        switch ( e.which )
+        {
+          case 37:
+          case 65:
+            keys['l'] = false;
+            break;
+          case 38:
+          case 87:
+            keys['u'] = false;
+            break;
+          case 39:
+          case 68:
+            keys['r'] = false;
+            break;
+          case 40:
+          case 83:
+            keys['d'] = false;
+            break;
+        }
+      }                                    
+    });
+  }
+  
+  function start()
+  {
+    //hide the overlay
+    $("#overlay").css('display','none');
+    
+    //initialize grid
+    grid = [];
+    for ( var i = 0; i <= cw; i++)
+      grid[i] = [];
+    
+    //player loc
+    p = { x:Math.floor(cw/2), y:Math.floor(ch/2), d:'s' };
+    grid[ p.x ][ p.y ] = p;        
+    
+    //enemy array
+    e_arr = [];       
+    
+    //start things off    
+    running = true;
+    stopping = false;
+    ticker = setInterval( tick, 50 );
+    render();
+  }
+  
+  function stop()
+  {
+    clearInterval(ticker);
+    running = false;
+    
+    //bring up the overlay
+    $("#overlay").css('display','block');
+    $("#overlay").css('opacity','0.9');
+    $("#score").html("Oh no, you got caught! Your score was: "+e_arr.length );    
+  }
+  
+  function tick()
+  {    
+    //player movement    
+    switch ( p.d )
+    {
+      case 'l':
+        move( p, -1, 0, true );
+        if ( !keys['l'] )
+          p.d = 's';
+        break;
+      case 'r':
+        move( p, 1, 0, true );
+        if ( !keys['r'] )
+          p.d = 's';
+        break;
+      case 'u':
+        move( p, 0, -1, true );
+        if ( !keys['u'] )
+          p.d = 's';
+        break;
+      case 'd':
+        move( p, 0, 1, true );
+        if ( !keys['d'] )
+          p.d = 's';
+        break;
+    }    
+    
+    //detect loss condition
+    var blocked = 0;
+    
+    if ( !move( p, -1, 0, false ) ) blocked++;    
+    if ( !move( p, 0, -1, false ) ) blocked++;
+    if ( !move( p, 0, 1, false ) ) blocked++;    
+    if ( !move( p, 1, 0, false ) ) blocked++;     
+    
+    if ( blocked == 4 && !stopping )
+    {
+      stopping = true;
+      setTimeout( stop, 2000 );
+    }    
+    
+    //create an enemy?
+    if ( rnd(0,2) == 0 )
+    {    
+      var e;
+      var loc = rnd(0,4)      
+      
+      if ( loc == 0 ) //random location
+        e = {x:rnd(0,cw), y:rnd(0,ch), fill:( '#'+(Math.random()*0xFFFFFF<<0).toString(16) ) };      
+      else //edge spawn to stop kiting
+      {
+        switch ( loc )
+        {
+          case 1: //left
+            e = {x:rnd(0,Math.ceil(cw*0.1)), y:rnd(0,ch), fill:( '#'+(Math.random()*0xFFFFFF<<0).toString(16) ) };
+            break;
+          case 2: //right
+            e = {x:rnd(Math.ceil(cw*0.8),cw), y:rnd(0,ch), fill:( '#'+(Math.random()*0xFFFFFF<<0).toString(16) ) };
+            break;
+          case 3: //top
+            e = {x:rnd(0,cw), y:rnd(0,Math.ceil(ch*0.1)), fill:( '#'+(Math.random()*0xFFFFFF<<0).toString(16) ) };
+            break;
+          case 4: //bottom
+            e = {x:rnd(0,cw), y:rnd(Math.ceil(ch*0.9),ch), fill:( '#'+(Math.random()*0xFFFFFF<<0).toString(16) ) };
+            break;
+        }        
+      }
+      
+      //we don't want to overlap enemies      
+      if ( typeof grid[ e.x ][ e.y ] == "undefined" )
+      {
+        //we also don't want to spawn too close to the player
+        if ( !(( e.x > p.x - 5 && e.x < p.x + 5 ) && ( e.y > p.y - 5 && e.y < p.y + 5 )) )
+        {
+          e_arr.push( e );
+          grid[ e.x ][ e.y ] = e;
+        }                
+      }      
+    }
+    
+    //enemy movement && behaviour
+    for ( var i = 0; i < e_arr.length; i++ )
+    {
+      e = e_arr[ i ];
+      
+      //movement - not every tick to give the player a chance
+      if ( rnd(0,1) == 0 )
+      {
+        if ( rnd(0,1) == 1 ) //opportunity to move horizontally or vertically
+        {
+          if ( p.x > e.x && typeof grid[ e.x+1 ][ e.y ] == "undefined"  ) //player below enemy
+            move( e, 1, 0, true );            
+          else if ( p.x < e.x && typeof grid[ e.x-1 ][ e.y ] == "undefined" ) //player above enemy          
+            move( e, -1, 0, true );
+        }
+        else //horizontal
+        {               
+          if ( p.y > e.y ) //player below enemy          
+            move( e, 0, 1, true );            
+          else if ( p.y < e.y && typeof grid[ e.x ][ e.y-1 ] == "undefined" ) //player above enemy          
+            move( e, 0, -1, true );
+        }        
+      }
+    }
+  }
+  
+  //try to move an entity, adjusting x/y based off the mod args
+  //mock = true to see if the move is possible, but not execute it
+  function move( entity, x_mod, y_mod, commit )
+  {        
+    if ( entity.x + x_mod >= 0 && entity.x + x_mod <= cw 
+         && entity.y + y_mod >= 0 && entity.y + y_mod <= ch
+         && typeof grid[ entity.x + x_mod ][ entity.y + y_mod ] == "undefined" )
+    {
+      if ( !commit )
+        return true;
+      
+      delete grid[ entity.x ][ entity.y ];
+      entity.x += x_mod;
+      entity.y += y_mod;
+      grid[ entity.x ][ entity.y ] = entity;
+      
+      return true;
+    }
+    else
+      return false;
+  }
+  
+  function render()
+  {
+    if ( running )
+      requestAnimationFrame( render );
+    else
+      return;
+
+    //clear&background
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, w, h);                             
+    
+    //render enemies    
+    for ( var i = 0; i < e_arr.length; i++ )
+      render_cell( e_arr[i].x, e_arr[i].y, e_arr[i].fill, '#000' );    
+      
+    //render player
+    render_cell( p.x, p.y, ( '#'+(Math.random()*0xFFFFFF<<0).toString(16) ), '#000' ); 
+  }
+  
+  //draw a square
+  function render_cell(x, y, fill, stroke )
+  {
+    ctx.fillStyle = fill;
+    ctx.fillRect( x*cs, y*cs, cs, cs );    
+    
+    ctx.strokeStyle = stroke;    
+    ctx.strokeRect( x*cs, y*cs, cs, cs );
+  }
+    
+  </script>
+  
+</head>
+<body onload="init()">
+
+<div id="overlay">
+  <div style="height: 100px;">&nbsp;</div>
+  <div id="score" style="font-weight: bold; color: #f00;"></div>
+  <div style="height: 40px;">&nbsp;</div>
+  <h1>
+    <span style="color: #E01B6A;">J</span>
+    <span style="color: #1BA5E0;">U</span>
+    <span style="color: #E0941B;">T</span>
+    <span style="color: #1BE07A;">T</span>
+    <span style="color: #E01BD0;">E</span>
+    <span style="color: #E03C1B;">R</span>
+    !
+  </h1>
+  
+  <div style="height: 20px; ">&nbsp;</div>
+  <p>A simple HTML5 game where you play as the valiant "Blinky", a blinking square who is trying to avoid getting trapped by other mundane, statically coloured squares who are jealous of him.</p>
+  <p><b>Controls:</b> Use <b>WASD</b> or the <b>Arrow</b> keys to avoid getting trapped.</p>
+  <div style="height: 10px; ">&nbsp;</div>
+  <Button onclick="start()">Click to play JUTTER! </Button>  
+  <div style="height: 70px; ">&nbsp;</div>
+  <div >Created by Kevin Dawe, <a href="http://kevindawe.ca">kevindawe.ca</a></div>
+  
+</div>
+
+<div id="frame">
+  <canvas id="canvas" width="501" height="501"></canvas>
+</div>
+
+</body>
+</html>
